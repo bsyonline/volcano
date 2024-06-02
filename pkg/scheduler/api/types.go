@@ -108,6 +108,8 @@ func validateStatusUpdate(oldStatus, newStatus TaskStatus) error {
 	return nil
 }
 
+type PrintJonFn func([]*JobInfo)
+
 // LessFn is the func declaration used by sort or priority queue.
 type LessFn func(interface{}, interface{}) bool
 
@@ -174,3 +176,5 @@ type VictimTasksFn func([]*TaskInfo) []*TaskInfo
 
 // AllocatableFn is the func declaration used to check whether the task can be allocated
 type AllocatableFn func(*QueueInfo, *TaskInfo) bool
+
+type PrintJobInfoFn func([]*TaskInfo)

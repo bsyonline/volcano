@@ -37,16 +37,16 @@ import (
 // Scheduler watches for new unscheduled pods for volcano. It attempts to find
 // nodes that they fit on and writes bindings back to the api server.
 type Scheduler struct {
-	cache          schedcache.Cache
-	schedulerConf  string
+	cache          schedcache.Cache // 实现是SchedulerCache，缓存所有调度资源
+	schedulerConf  string           // 调度器配置文件路径
 	fileWatcher    filewatcher.FileWatcher
-	schedulePeriod time.Duration
+	schedulePeriod time.Duration // 调度器的调度周期，默认1s
 	once           sync.Once
 
 	mutex          sync.Mutex
-	actions        []framework.Action
-	plugins        []conf.Tier
-	configurations []conf.Configuration
+	actions        []framework.Action   // 调度器的配置文件中设置的每一轮调度的处理逻辑，如enqueue、allocate、backfill等
+	plugins        []conf.Tier          // 调度器的配置文件中设置的调度算法各层的算法集合
+	configurations []conf.Configuration // 调度器每个action对应的参数
 	metricsConf    map[string]string
 }
 
@@ -81,13 +81,16 @@ func NewScheduler(
 
 // Run runs the Scheduler
 func (pc *Scheduler) Run(stopCh <-chan struct{}) {
+	// 加载配置
 	pc.loadSchedulerConf()
 	go pc.watchSchedulerConf(stopCh)
 	// Start cache for policy.
 	pc.cache.SetMetricsConf(pc.metricsConf)
+	// 同步cache，缓存node、pod、job等信息
 	pc.cache.Run(stopCh)
 	pc.cache.WaitForCacheSync(stopCh)
 	klog.V(2).Infof("scheduler completes Initialization and start to run")
+	// 周期执行runOnce，直到收到stopCh信号
 	go wait.Until(pc.runOnce, pc.schedulePeriod, stopCh)
 }
 
@@ -108,9 +111,11 @@ func (pc *Scheduler) runOnce() {
 		conf.EnabledActionMap[action.Name()] = true
 	}
 
+	// 创建新的session，将cache、配置复制到session中，为每一个调度器注册对应的调度算法
 	ssn := framework.OpenSession(pc.cache, plugins, configurations)
 	defer framework.CloseSession(ssn)
 
+	// 根据配置文件中配置的action顺序执行，使用的都是cache中的数据，资源更新不会影响本次执行
 	for _, action := range actions {
 		actionStartTime := time.Now()
 		action.Execute(ssn)

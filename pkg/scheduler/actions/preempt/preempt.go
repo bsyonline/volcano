@@ -93,17 +93,20 @@ func (pmpt *Action) Execute(ssn *framework.Session) {
 				break
 			}
 
+			// 从队列拿job看是否需要抢占
 			preemptorJob := preemptors.Pop().(*api.JobInfo)
 
 			stmt := framework.NewStatement(ssn)
 			assigned := false
 			for {
 				// If job is not request more resource, then stop preempting.
+				// 不能申请更多资源，跳过
 				if !ssn.JobStarving(preemptorJob) {
 					break
 				}
 
 				// If not preemptor tasks, next job.
+				// 不用抢占，跳过
 				if preemptorTasks[preemptorJob.UID].Empty() {
 					klog.V(3).Infof("No preemptor task in job <%s/%s>.",
 						preemptorJob.Namespace, preemptorJob.Name)
@@ -112,25 +115,28 @@ func (pmpt *Action) Execute(ssn *framework.Session) {
 
 				preemptor := preemptorTasks[preemptorJob.UID].Pop().(*api.TaskInfo)
 
-				if preempted, _ := preempt(ssn, stmt, preemptor, func(task *api.TaskInfo) bool {
-					// Ignore non running task.
-					if task.Status != api.Running {
-						return false
-					}
-					// Ignore task with empty resource request.
-					if task.Resreq.IsEmpty() {
-						return false
-					}
-					if !task.Preemptable {
-						return false
-					}
-					job, found := ssn.Jobs[task.Job]
-					if !found {
-						return false
-					}
-					// Preempt other jobs within queue
-					return job.Queue == preemptorJob.Queue && preemptor.Job != task.Job
-				}, ph); preempted {
+				// 执行抢占
+				if preempted, _ := preempt(ssn, stmt, preemptor,
+					// 判断task是否可以被抢占
+					func(task *api.TaskInfo) bool {
+						// Ignore non running task.
+						if task.Status != api.Running {
+							return false
+						}
+						// Ignore task with empty resource request.
+						if task.Resreq.IsEmpty() {
+							return false
+						}
+						if !task.Preemptable {
+							return false
+						}
+						job, found := ssn.Jobs[task.Job]
+						if !found {
+							return false
+						}
+						// Preempt other jobs within queue
+						return job.Queue == preemptorJob.Queue && preemptor.Job != task.Job
+					}, ph); preempted {
 					assigned = true
 				}
 			}
@@ -149,9 +155,11 @@ func (pmpt *Action) Execute(ssn *framework.Session) {
 		}
 
 		// Preemption between Task within Job.
+		// underRequest为需要抢占的job
 		for _, job := range underRequest {
 			// Fix: preemptor numbers lose when in same job
 			preemptorTasks[job.UID] = util.NewPriorityQueue(ssn.TaskOrderFn)
+			// 将pending状态的task加入到preemptorTasks中
 			for _, task := range job.TaskStatusIndex[api.Pending] {
 				preemptorTasks[job.UID].Push(task)
 			}
@@ -166,7 +174,9 @@ func (pmpt *Action) Execute(ssn *framework.Session) {
 
 				preemptor := preemptorTasks[job.UID].Pop().(*api.TaskInfo)
 
+				// 创建一个statement
 				stmt := framework.NewStatement(ssn)
+				//
 				assigned, _ := preempt(ssn, stmt, preemptor, func(task *api.TaskInfo) bool {
 					// Ignore non running task.
 					if task.Status != api.Running {
@@ -212,7 +222,7 @@ func preempt(
 	predicateNodes, _ := predicateHelper.PredicateNodes(preemptor, allNodes, ssn.PredicateFn)
 
 	nodeScores := util.PrioritizeNodes(preemptor, predicateNodes, ssn.BatchNodeOrderFn, ssn.NodeOrderMapFn, ssn.NodeOrderReduceFn)
-
+	// 选择最优node
 	selectedNodes := util.SortNodes(nodeScores)
 
 	job, found := ssn.Jobs[preemptor.Job]
@@ -225,7 +235,7 @@ func preempt(
 	for _, node := range selectedNodes {
 		klog.V(3).Infof("Considering Task <%s/%s> on Node <%s>.",
 			preemptor.Namespace, preemptor.Name, node.Name)
-
+		// 可能被驱逐的task
 		var preemptees []*api.TaskInfo
 		for _, task := range node.Tasks {
 			if filter == nil {
@@ -234,6 +244,7 @@ func preempt(
 				preemptees = append(preemptees, task.Clone())
 			}
 		}
+		// 可以被驱逐的task
 		victims := ssn.Preemptable(preemptor, preemptees)
 		metrics.UpdatePreemptionVictimsCount(len(victims))
 
@@ -242,6 +253,7 @@ func preempt(
 			continue
 		}
 
+		// 可以驱逐的task排序， 优先级低的先被驱逐
 		victimsQueue := util.NewPriorityQueue(func(l, r interface{}) bool {
 			lv := l.(*api.TaskInfo)
 			rv := r.(*api.TaskInfo)
@@ -265,6 +277,7 @@ func preempt(
 			preemptee := victimsQueue.Pop().(*api.TaskInfo)
 			klog.V(3).Infof("Try to preempt Task <%s/%s> for Task <%s/%s>",
 				preemptee.Namespace, preemptee.Name, preemptor.Namespace, preemptor.Name)
+			// 驱逐
 			if err := stmt.Evict(preemptee, "preempt"); err != nil {
 				klog.Errorf("Failed to preempt Task <%s/%s> for Task <%s/%s>: %v",
 					preemptee.Namespace, preemptee.Name, preemptor.Namespace, preemptor.Name, err)

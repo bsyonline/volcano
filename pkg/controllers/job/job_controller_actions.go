@@ -49,6 +49,7 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 	defer klog.V(3).Infof("Finished Job <%s/%s> killing, current version %d", job.Namespace, job.Name, job.Status.Version)
 
 	if job.DeletionTimestamp != nil {
+		// 不处理正在删除中的Pod（可能其他协程在删除）
 		klog.Infof("Job <%s/%s> is terminating, skip management process.",
 			job.Namespace, job.Name)
 		return nil
@@ -60,11 +61,13 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 	var errs []error
 	var total int
 
+	// 删除Job下的所有Pod
 	for _, pods := range jobInfo.Pods {
 		for _, pod := range pods {
 			total++
 
 			if pod.DeletionTimestamp != nil {
+				// 跳过删除中的Pod
 				klog.Infof("Pod <%s/%s> is terminating", pod.Namespace, pod.Name)
 				terminating++
 				continue
@@ -85,6 +88,7 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 			_, retain := retainPhase[pod.Status.Phase]
 
 			if !retain {
+				// 调接口删除状态不是Success或Failed的Pod
 				err := cc.deleteJobPod(job.Name, pod)
 				if err == nil {
 					terminating++
@@ -136,12 +140,14 @@ func (cc *jobcontroller) killJob(jobInfo *apis.JobInfo, podRetainPhase state.Pha
 	}
 
 	// Update Job status
+	// 将各种状态的Pod数量更新到status中
 	newJob, err := cc.vcClient.BatchV1alpha1().Jobs(job.Namespace).UpdateStatus(context.TODO(), job, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Errorf("Failed to update status of Job %v/%v: %v",
 			job.Namespace, job.Name, err)
 		return err
 	}
+	// 更新缓存
 	if e := cc.cache.Update(newJob); e != nil {
 		klog.Errorf("KillJob - Failed to update Job %v/%v in cache:  %v",
 			newJob.Namespace, newJob.Name, e)
@@ -227,6 +233,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	defer klog.V(3).Infof("Finished Job <%s/%s> sync up, current version %d", job.Namespace, job.Name, job.Status.Version)
 
 	if jobInfo.Job.DeletionTimestamp != nil {
+		// 删除中的Job就跳过
 		klog.Infof("Job <%s/%s> is terminating, skip management process.",
 			jobInfo.Job.Namespace, jobInfo.Job.Name)
 		return nil
@@ -256,12 +263,15 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 	}
 
 	// Skip job initiation if job is already initiated
+	// job的状态（job.Status.State.Phase）为空或者Pending则进行初始化
 	if !isInitiated(job) {
+		// 初始化job，主要是创建对应的PVC和PodGroup（PodGroup中的Name和Job的Name相同，PodGroup中的QueueName直接使用了Job的QueueName）
 		if job, err = cc.initiateJob(job); err != nil {
 			return err
 		}
 	} else {
 		// TODO: optimize this call it only when scale up/down
+		// 如果Job已经初始化了则根据Job的minAvailable是否变化来更新PodGroup
 		if err = cc.initOnJobUpdate(job); err != nil {
 			return err
 		}
@@ -332,6 +342,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 
 	waitCreationGroup := sync.WaitGroup{}
 
+	// 根据Job中的Tasks的template创建对应的Pod
 	for _, ts := range job.Spec.Tasks {
 		ts.Template.Name = ts.Name
 		tc := ts.Template.DeepCopy()
@@ -344,8 +355,11 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 
 		var podToCreateEachTask []*v1.Pod
 		for i := 0; i < int(ts.Replicas); i++ {
+			// podName带序号
 			podName := fmt.Sprintf(jobhelpers.PodNameFmt, job.Name, name, i)
 			if pod, found := pods[podName]; !found {
+				// Pod不存在时创建新的Pod，创建时会将Job、Task相关信息写到Pod的annotation和label中
+				// PodGroup的name会写到annotation
 				newPod := createJobPod(job, tc, ts.TopologyPolicy, i, jobForwarding)
 				if err := cc.pluginOnPodCreate(job, newPod); err != nil {
 					return err
@@ -353,6 +367,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 				podToCreateEachTask = append(podToCreateEachTask, newPod)
 				waitCreationGroup.Add(1)
 			} else {
+				// 删掉已经存在的Pod，缩容时删除缓存中前面的Pod，然后将剩下的Pod加入到删除队列
 				delete(pods, podName)
 				if pod.DeletionTimestamp != nil {
 					klog.Infof("Pod <%s/%s> is terminating", pod.Namespace, pod.Name)
@@ -365,6 +380,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 			}
 		}
 		podToCreate[ts.Name] = podToCreateEachTask
+		// 将剩下的Pod加入到删除队列，缩容时优先删除
 		for _, pod := range pods {
 			podToDelete = append(podToDelete, pod)
 		}
@@ -381,6 +397,7 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 			}
 
 			for _, pod := range podToCreateEachTask {
+				// 协程创建Pod
 				go func(pod *v1.Pod) {
 					defer waitCreationGroup.Done()
 					newPod, err := cc.kubeClient.CoreV1().Pods(pod.Namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
@@ -461,12 +478,14 @@ func (cc *jobcontroller) syncJob(jobInfo *apis.JobInfo, updateStatus state.Updat
 		jobCondition = newCondition(job.Status.State.Phase, &job.Status.State.LastTransitionTime)
 		job.Status.Conditions = append(job.Status.Conditions, jobCondition)
 	}
+	// 更新Job状态
 	newJob, err := cc.vcClient.BatchV1alpha1().Jobs(job.Namespace).UpdateStatus(context.TODO(), job, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Errorf("Failed to update status of Job %v/%v: %v",
 			job.Namespace, job.Name, err)
 		return err
 	}
+	// 更新缓存
 	if e := cc.cache.Update(newJob); e != nil {
 		klog.Errorf("SyncJob - Failed to update Job %v/%v in cache:  %v",
 			newJob.Namespace, newJob.Name, e)

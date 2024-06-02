@@ -670,11 +670,14 @@ func (sc *SchedulerCache) Run(stopCh <-chan struct{}) {
 	sc.informerFactory.Start(stopCh)
 	sc.vcInformerFactory.Start(stopCh)
 	// Re-sync error tasks.
+	// 周期从错误队列中取出task，调apiserver获取最新的信息并更新task
 	go wait.Until(sc.processResyncTask, 0, stopCh)
 
 	// Cleanup jobs.
+	// 周期清理cache中的JobInfo（PogGroup为空&&Task为空）
 	go wait.Until(sc.processCleanupJob, 0, stopCh)
 
+	// 周期执行绑定volume到Task
 	go wait.Until(sc.processBindTask, time.Millisecond*20, stopCh)
 
 	// Get metrics data
@@ -984,6 +987,7 @@ func (sc *SchedulerCache) AddBindTask(taskInfo *schedulingapi.TaskInfo) error {
 }
 
 func (sc *SchedulerCache) processBindTask() {
+	// 从channel中取batchNum个JobInfo准备绑定
 	for {
 		select {
 		case taskInfo, ok := <-sc.BindFlowChannel:
@@ -1006,7 +1010,7 @@ func (sc *SchedulerCache) processBindTask() {
 	if len(sc.bindCache) == 0 {
 		return
 	}
-
+	// 执行绑定
 	sc.BindTask()
 }
 

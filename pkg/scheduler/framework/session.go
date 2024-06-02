@@ -69,31 +69,32 @@ type Session struct {
 
 	plugins           map[string]Plugin
 	eventHandlers     []*EventHandler
-	jobOrderFns       map[string]api.CompareFn
-	queueOrderFns     map[string]api.CompareFn
-	taskOrderFns      map[string]api.CompareFn
+	jobOrderFns       map[string]api.CompareFn // 决定哪个Job被优先处理（调度、回收、抢占）
+	queueOrderFns     map[string]api.CompareFn // 决定哪个Queue被优先处理
+	taskOrderFns      map[string]api.CompareFn // 决定Job中的哪个容器被优先处理
 	namespaceOrderFns map[string]api.CompareFn
 	clusterOrderFns   map[string]api.CompareFn
-	predicateFns      map[string]api.PredicateFn
+	predicateFns      map[string]api.PredicateFn // 判断节点是否满足Pod的调度要求
 	prePredicateFns   map[string]api.PrePredicateFn
 	bestNodeFns       map[string]api.BestNodeFn
 	nodeOrderFns      map[string]api.NodeOrderFn
 	batchNodeOrderFns map[string]api.BatchNodeOrderFn
 	nodeMapFns        map[string]api.NodeMapFn
 	nodeReduceFns     map[string]api.NodeReduceFn
-	preemptableFns    map[string]api.EvictableFn
-	reclaimableFns    map[string]api.EvictableFn
-	overusedFns       map[string]api.ValidateFn
+	preemptableFns    map[string]api.EvictableFn // 决定哪个Pod可以被抢占
+	reclaimableFns    map[string]api.EvictableFn // 决定哪个Pod可以被回收
+	overusedFns       map[string]api.ValidateFn  // 判断队列的资源是否超过限额，超过就不再调度队列中的Job
 	allocatableFns    map[string]api.AllocatableFn
-	jobReadyFns       map[string]api.ValidateFn
-	jobPipelinedFns   map[string]api.VoteFn
-	jobValidFns       map[string]api.ValidateExFn
+	jobReadyFns       map[string]api.ValidateFn   // 判断Job是否ready
+	jobPipelinedFns   map[string]api.VoteFn       // 判断Job是否处于Pipelined状态
+	jobValidFns       map[string]api.ValidateExFn // 判断Job是否有效
 	jobEnqueueableFns map[string]api.VoteFn
 	jobEnqueuedFns    map[string]api.JobEnqueuedFn
 	targetJobFns      map[string]api.TargetJobFn
 	reservedNodesFns  map[string]api.ReservedNodesFn
 	victimTasksFns    map[string][]api.VictimTasksFn
 	jobStarvingFns    map[string]api.ValidateFn
+	printJobFns       map[string]api.PrintJonFn
 }
 
 func openSession(cache cache.Cache) *Session {

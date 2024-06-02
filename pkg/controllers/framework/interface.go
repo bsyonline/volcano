@@ -38,6 +38,7 @@ type ControllerOption struct {
 // Controller is the interface of all controllers.
 type Controller interface {
 	Name() string
+	// 初始化
 	Initialize(opt *ControllerOption) error
 	// Run run the controller
 	Run(stopCh <-chan struct{})

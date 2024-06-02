@@ -18,11 +18,9 @@ package gang
 
 import (
 	"fmt"
-
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
-
 	"volcano.sh/apis/pkg/apis/scheduling"
 	"volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 	"volcano.sh/volcano/pkg/scheduler/api"
@@ -85,6 +83,12 @@ func (gp *gangPlugin) OnSessionOpen(ssn *framework.Session) {
 		jobOccupiedMap := map[api.JobID]int32{}
 
 		for _, preemptee := range preemptees {
+			if preemptee.Priority >= preemptor.Priority {
+				klog.V(4).Infof("Can not preempt task <%v/%v> because %v's priority higher then %v's priority",
+					preemptee.Namespace, preemptee.Name, preemptee.Name, preemptee.Name, preemptor.Name)
+				continue
+			}
+
 			job := ssn.Jobs[preemptee.Job]
 			if _, found := jobOccupiedMap[job.UID]; !found {
 				jobOccupiedMap[job.UID] = job.ReadyTaskNum()

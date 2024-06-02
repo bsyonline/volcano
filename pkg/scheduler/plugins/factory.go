@@ -23,6 +23,7 @@ import (
 	"volcano.sh/volcano/pkg/scheduler/plugins/conformance"
 	"volcano.sh/volcano/pkg/scheduler/plugins/drf"
 	"volcano.sh/volcano/pkg/scheduler/plugins/extender"
+	"volcano.sh/volcano/pkg/scheduler/plugins/foo"
 	"volcano.sh/volcano/pkg/scheduler/plugins/gang"
 	"volcano.sh/volcano/pkg/scheduler/plugins/nodeorder"
 	"volcano.sh/volcano/pkg/scheduler/plugins/numaaware"
@@ -64,4 +65,6 @@ func init() {
 
 	// Plugins for ResourceQuota
 	framework.RegisterPluginBuilder(resourcequota.PluginName, resourcequota.New)
+
+	framework.RegisterPluginBuilder(foo.PluginName, foo.New)
 }

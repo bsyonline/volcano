@@ -72,11 +72,13 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 		}
 
 		if vr := ssn.JobValid(job); vr != nil && !vr.Pass {
+			// 不满足条件则跳过
 			klog.V(4).Infof("Job <%s/%s> Queue <%s> skip allocate, reason: %v, message %v", job.Namespace, job.Name, job.Queue, vr.Reason, vr.Message)
 			continue
 		}
 
 		if _, found := ssn.Queues[job.Queue]; !found {
+			// job的queue不存在则跳过
 			klog.Warningf("Skip adding Job <%s/%s> because its queue %s is not found",
 				job.Namespace, job.Name, job.Queue)
 			continue
@@ -98,6 +100,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 		}
 
 		klog.V(4).Infof("Added Job <%s/%s> into Queue <%s>", job.Namespace, job.Name, job.Queue)
+		// namespace、queue都OK则将job加入队列
 		jobs.Push(job)
 	}
 
@@ -106,6 +109,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 	pendingTasks := map[api.JobID]*util.PriorityQueue{}
 
 	allNodes := ssn.NodeList
+	// 检查node是否满足task资源需求
 	predicateFn := func(task *api.TaskInfo, node *api.NodeInfo) error {
 		// Check for Resource Predicate
 		if !task.InitResreq.LessEqual(node.FutureIdle(), api.Zero) {
@@ -138,6 +142,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 		for queueID := range queueInNamespace {
 			currentQueue := ssn.Queues[queueID]
 			if ssn.Overused(currentQueue) {
+				// 如果queue占用资源过多，则不再调度该queue
 				klog.V(3).Infof("Namespace <%s> Queue <%s> is overused, ignore it.", namespace, currentQueue.Name)
 				delete(queueInNamespace, queueID)
 				continue
@@ -166,8 +171,10 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 			continue
 		}
 
+		// 从jobs队列中取优先级最高的Job
 		job := jobs.Pop().(*api.JobInfo)
 		if _, found = pendingTasks[job.UID]; !found {
+			// 创建一个优先级队列
 			tasks := util.NewPriorityQueue(ssn.TaskOrderFn)
 			for _, task := range job.TaskStatusIndex[api.Pending] {
 				// Skip BestEffort task in 'allocate' action.
@@ -176,9 +183,10 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 						task.Namespace, task.Name)
 					continue
 				}
-
+				// 将Job下的Task放到优先级队列
 				tasks.Push(task)
 			}
+			// key是Job的id，value是优先级队列
 			pendingTasks[job.UID] = tasks
 		}
 		tasks := pendingTasks[job.UID]
@@ -186,18 +194,23 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 		klog.V(3).Infof("Try to allocate resource to %d tasks of Job <%v/%v>",
 			tasks.Len(), job.Namespace, job.Name)
 
+		// 创建一个statement
 		stmt := framework.NewStatement(ssn)
+		// 创建ph，存储node检查结果
 		ph := util.NewPredicateHelper()
+		// 如果Task不为空，循环处理Task
 		for !tasks.Empty() {
+			// 从优先级队列取出优先级最高的Task
 			task := tasks.Pop().(*api.TaskInfo)
 
 			if !ssn.Allocatable(queue, task) {
+				// 资源不够则跳过
 				klog.V(3).Infof("Queue <%s> is overused when considering task <%s>, ignore it.", queue.Name, task.Name)
 				continue
 			}
 
 			klog.V(3).Infof("There are <%d> nodes for Job <%v/%v>", len(ssn.Nodes), job.Namespace, job.Name)
-
+			// 执行预选函数
 			if err := ssn.PrePredicateFn(task); err != nil {
 				klog.V(3).Infof("PrePredicate for task %s/%s failed for: %v", task.Namespace, task.Name, err)
 				fitErrors := api.NewFitErrors()
@@ -208,14 +221,17 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 				break
 			}
 
+			// 拿到预选通过的node列表
 			predicateNodes, fitErrors := ph.PredicateNodes(task, allNodes, predicateFn)
 			if len(predicateNodes) == 0 {
 				job.NodesFitErrors[task.UID] = fitErrors
 				break
 			}
 
+			// 候选node列表
 			var candidateNodes []*api.NodeInfo
 			for _, n := range predicateNodes {
+				// 空闲的node和未来会空闲的node加入列表
 				if task.InitResreq.LessEqual(n.Idle, api.Zero) || task.InitResreq.LessEqual(n.FutureIdle(), api.Zero) {
 					candidateNodes = append(candidateNodes, n)
 				}
@@ -224,12 +240,15 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 			var node *api.NodeInfo
 			switch {
 			case len(candidateNodes) == 0: // If not candidate nodes for this task, skip it.
+				// 没有node，跳过
 				continue
 			case len(candidateNodes) == 1: // If only one node after predicate, just use it.
+				// 有一个node，直接用
 				node = candidateNodes[0]
 			case len(candidateNodes) > 1: // If more than one node after predicate, using "the best" one
+				// 有多个node，优选打分
 				nodeScores := util.PrioritizeNodes(task, candidateNodes, ssn.BatchNodeOrderFn, ssn.NodeOrderMapFn, ssn.NodeOrderReduceFn)
-
+				// 优选
 				node = ssn.BestNodeFn(task, nodeScores)
 				if node == nil {
 					node = util.SelectBestNode(nodeScores)
@@ -237,6 +256,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 			}
 
 			// Allocate idle resource to the task.
+			// 将选到的最佳node的资源分给Task
 			if task.InitResreq.LessEqual(node.Idle, api.Zero) {
 				klog.V(3).Infof("Binding Task <%v/%v> to node <%v>",
 					task.Namespace, task.Name, node.Name)
@@ -252,6 +272,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 					task.Namespace, task.Name, node.Name)
 
 				// Allocate releasing resource to the task if any.
+				// 将预期要释放的资源分给Task
 				if task.InitResreq.LessEqual(node.FutureIdle(), api.Zero) {
 					klog.V(3).Infof("Pipelining Task <%v/%v> to node <%v> for <%v> on <%v>",
 						task.Namespace, task.Name, node.Name, task.InitResreq, node.Releasing)

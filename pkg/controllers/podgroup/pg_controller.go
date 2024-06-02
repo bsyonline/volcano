@@ -136,6 +136,7 @@ func (pg *pgcontroller) processNextReq() bool {
 	req := obj.(podRequest)
 	defer pg.queue.Done(req)
 
+	// 从list缓存中获取Pod信息
 	pod, err := pg.podLister.Pods(req.podNamespace).Get(req.podName)
 	if err != nil {
 		klog.Errorf("Failed to get pod by <%v> from cache: %v", req, err)
@@ -153,6 +154,7 @@ func (pg *pgcontroller) processNextReq() bool {
 	}
 
 	// normal pod use volcano
+	// 对于没有创建对应的PodGroup的Pod创建其PodGroup，并将PodGroup的name写到Pod的annotation中
 	if err := pg.createNormalPodPGIfNotExist(pod); err != nil {
 		klog.Errorf("Failed to handle Pod <%s/%s>: %v", pod.Namespace, pod.Name, err)
 		pg.queue.AddRateLimited(req)

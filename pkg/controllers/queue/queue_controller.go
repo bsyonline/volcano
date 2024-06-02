@@ -218,12 +218,14 @@ func (c *queuecontroller) processNextWorkItem() bool {
 	return true
 }
 
+// 处理队列消息
 func (c *queuecontroller) handleQueue(req *apis.Request) error {
 	startTime := time.Now()
 	defer func() {
 		klog.V(4).Infof("Finished syncing queue %s (%v).", req.QueueName, time.Since(startTime))
 	}()
 
+	// 从informer缓存中获取Queue的信息
 	queue, err := c.queueLister.Get(req.QueueName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -234,12 +236,14 @@ func (c *queuecontroller) handleQueue(req *apis.Request) error {
 		return fmt.Errorf("get queue %s failed for %v", req.QueueName, err)
 	}
 
+	// 根据queue的状态生成处理函数
 	queueState := queuestate.NewState(queue)
 	if queueState == nil {
 		return fmt.Errorf("queue %s state %s is invalid", queue.Name, queue.Status.State)
 	}
 
 	klog.V(4).Infof("Begin execute %s action for queue %s, current status %s", req.Action, req.QueueName, queue.Status.State)
+	// 根据action和status来执行处理函数
 	if err := queueState.Execute(req.Action); err != nil {
 		return fmt.Errorf("sync queue %s failed for %v, event is %v, action is %s",
 			req.QueueName, err, req.Event, req.Action)
@@ -306,12 +310,13 @@ func (c *queuecontroller) handleCommand(cmd *busv1alpha1.Command) error {
 		return fmt.Errorf("failed to delete command <%s/%s> for %v", cmd.Namespace, cmd.Name, err)
 	}
 
+	// 将Command转换成request
 	req := &apis.Request{
 		QueueName: cmd.TargetObject.Name,
 		Event:     busv1alpha1.CommandIssuedEvent,
 		Action:    busv1alpha1.Action(cmd.Action),
 	}
-
+	// 加入队列
 	c.enqueueQueue(req)
 
 	return nil

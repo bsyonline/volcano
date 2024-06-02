@@ -70,6 +70,7 @@ func Run(opt *options.ServerOption) error {
 		return fmt.Errorf("finished without leader elect")
 	}
 
+	// 创建选举锁对象
 	leaderElectionClient, err := kubeclientset.NewForConfig(rest.AddUserAgent(config, "leader-election"))
 	if err != nil {
 		return err
@@ -100,6 +101,8 @@ func Run(opt *options.ServerOption) error {
 		return fmt.Errorf("couldn't create resource lock: %v", err)
 	}
 
+	// 进行选举，如果拿到锁，则执行控制器逻辑，没拿到则等待。
+	// 如果在拿到锁后，发生异常导致续锁失败，导致被抢占，则退出进程。
 	leaderelection.RunOrDie(context.TODO(), leaderelection.LeaderElectionConfig{
 		Lock:          rl,
 		LeaseDuration: leaseDuration,

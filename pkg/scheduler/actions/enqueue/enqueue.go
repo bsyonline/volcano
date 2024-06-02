@@ -44,6 +44,7 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 	klog.V(3).Infof("Enter Enqueue ...")
 	defer klog.V(3).Infof("Leaving Enqueue ...")
 
+	// 使用QueueOrderFn对队列进行排序，
 	queues := util.NewPriorityQueue(ssn.QueueOrderFn)
 	queueMap := map[api.QueueID]*api.QueueInfo{}
 	jobsMap := map[api.QueueID]*util.PriorityQueue{}
@@ -55,10 +56,12 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 			}
 		}
 		if queue, found := ssn.Queues[job.Queue]; !found {
+			// 如果job的queue不存在则跳过
 			klog.Errorf("Failed to find Queue <%s> for Job <%s/%s>",
 				job.Queue, job.Namespace, job.Name)
 			continue
 		} else if _, existed := queueMap[queue.UID]; !existed {
+			// 如果queue不在队列中则加入队列
 			klog.V(5).Infof("Added Queue <%s> for Job <%s/%s>",
 				queue.Name, job.Namespace, job.Name)
 
@@ -66,6 +69,7 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 			queues.Push(queue)
 		}
 
+		// 如果job是pending状态，将job加入到队列，如果队列不存在则新建队列
 		if job.IsPending() {
 			if _, found := jobsMap[job.Queue]; !found {
 				jobsMap[job.Queue] = util.NewPriorityQueue(ssn.JobOrderFn)
@@ -82,22 +86,27 @@ func (enqueue *Action) Execute(ssn *framework.Session) {
 			break
 		}
 
+		// 从优先级队列中取出优先级最高的queue
 		queue := queues.Pop().(*api.QueueInfo)
 
 		// Found "high" priority job
 		jobs, found := jobsMap[queue.UID]
 		if !found || jobs.Empty() {
+			// 队列里Job为空，跳出，queue就不会再放会到队列
 			continue
 		}
 		job := jobs.Pop().(*api.JobInfo)
 
 		if job.PodGroup.Spec.MinResources == nil || ssn.JobEnqueueable(job) {
 			ssn.JobEnqueued(job)
+			// status.Phase更新为Inqueue
 			job.PodGroup.Status.Phase = scheduling.PodGroupInqueue
+			// 把Job加入到ssn.Jobs
 			ssn.Jobs[job.UID] = job
 		}
 
 		// Added Queue back until no job in Queue.
+		// 将queue再放回队列，直到队列为空
 		queues.Push(queue)
 	}
 }

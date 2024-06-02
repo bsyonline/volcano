@@ -48,6 +48,7 @@ func (c *queuecontroller) syncQueue(queue *schedulingv1beta1.Queue, updateStateF
 			return err
 		}
 
+		// 更新计数器
 		switch pg.Status.Phase {
 		case schedulingv1beta1.PodGroupPending:
 			queueStatus.Pending++
@@ -75,6 +76,7 @@ func (c *queuecontroller) syncQueue(queue *schedulingv1beta1.Queue, updateStateF
 
 	newQueue := queue.DeepCopy()
 	newQueue.Status = queueStatus
+	// 更新queue的状态
 	if _, err := c.vcClient.SchedulingV1beta1().Queues().UpdateStatus(context.TODO(), newQueue, metav1.UpdateOptions{}); err != nil {
 		klog.Errorf("Failed to update status of Queue %s: %v.", newQueue.Name, err)
 		return err

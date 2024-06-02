@@ -299,6 +299,7 @@ func (cc *jobcontroller) getWorkerQueue(key string) workqueue.RateLimitingInterf
 }
 
 func (cc *jobcontroller) processNextReq(count uint32) bool {
+	// 一个worker处理一个queue，拿到自己的queue
 	queue := cc.queueList[count]
 	obj, shutdown := queue.Get()
 	if shutdown {
@@ -309,6 +310,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 	req := obj.(apis.Request)
 	defer queue.Done(req)
 
+	// 如果拿到的不是自己queue的job，就重新放回去
 	key := jobcache.JobKeyByReq(&req)
 	if !cc.belongsToThisRoutine(key, count) {
 		klog.Errorf("should not occur The job does not belongs to this routine key:%s, worker:%d...... ", key, count)
@@ -326,6 +328,7 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 		return true
 	}
 
+	// 生成对应的执行函数
 	st := state.NewState(jobInfo)
 	if st == nil {
 		klog.Errorf("Invalid state <%s> of Job <%v/%v>",
@@ -342,6 +345,8 @@ func (cc *jobcontroller) processNextReq(count uint32) bool {
 			"Start to execute action %s ", action))
 	}
 
+	// 执行
+	// 比如pod是pending状态，上边st返回的就是一个&pendingState，所以这里的Execute是pendingState中的实现
 	if err := st.Execute(action); err != nil {
 		if cc.maxRequeueNum == -1 || queue.NumRequeues(req) < cc.maxRequeueNum {
 			klog.V(2).Infof("Failed to handle Job <%s/%s>: %v",

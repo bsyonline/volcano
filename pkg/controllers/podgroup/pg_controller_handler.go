@@ -147,6 +147,7 @@ func (pg *pgcontroller) inheritUpperAnnotations(pod *v1.Pod, obj *scheduling.Pod
 func (pg *pgcontroller) createNormalPodPGIfNotExist(pod *v1.Pod) error {
 	pgName := helpers.GeneratePodgroupName(pod)
 
+	// PodGroup不存在时创建
 	if _, err := pg.pgLister.PodGroups(pod.Namespace).Get(pgName); err != nil {
 		if !apierrors.IsNotFound(err) {
 			klog.Errorf("Failed to get normal PodGroup for Pod <%s/%s>: %v",
@@ -174,6 +175,7 @@ func (pg *pgcontroller) createNormalPodPGIfNotExist(pod *v1.Pod) error {
 
 		pg.inheritUpperAnnotations(pod, obj)
 		// Individual annotations on pods would overwrite annotations inherited from upper resources.
+		// 如果Pod中有queueName的annotation则将queueName写到PodGroup的Spec中
 		if queueName, ok := pod.Annotations[scheduling.QueueNameAnnotationKey]; ok {
 			obj.Spec.Queue = queueName
 		}
@@ -200,6 +202,7 @@ func (pg *pgcontroller) createNormalPodPGIfNotExist(pod *v1.Pod) error {
 			obj.Annotations[scheduling.JDBMaxUnavailable] = value
 		}
 
+		// 创建PodGroup
 		if _, err := pg.vcClient.SchedulingV1beta1().PodGroups(pod.Namespace).Create(context.TODO(), obj, metav1.CreateOptions{}); err != nil {
 			klog.Errorf("Failed to create normal PodGroup for Pod <%s/%s>: %v",
 				pod.Namespace, pod.Name, err)

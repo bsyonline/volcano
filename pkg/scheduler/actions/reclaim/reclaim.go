@@ -145,6 +145,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 					continue
 				} else if j.Queue != job.Queue {
 					q := ssn.Queues[j.Queue]
+					// 判断队列是否可以被回收， 取的是spec.reclaimable
 					if !q.Reclaimable() {
 						continue
 					}
@@ -152,6 +153,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 					reclaimees = append(reclaimees, task.Clone())
 				}
 			}
+			// 获取可以被回收的task
 			victims := ssn.Reclaimable(task, reclaimees)
 
 			if err := util.ValidateVictims(task, n, victims); err != nil {
@@ -181,6 +183,7 @@ func (ra *Action) Execute(ssn *framework.Session) {
 			klog.V(3).Infof("Reclaimed <%v> for task <%s/%s> requested <%v>.",
 				reclaimed, task.Namespace, task.Name, task.InitResreq)
 
+			// 回收完结束循环
 			if task.InitResreq.LessEqual(reclaimed, api.Zero) {
 				if err := ssn.Pipeline(task, n.Name); err != nil {
 					klog.Errorf("Failed to pipeline Task <%s/%s> on Node <%s>",

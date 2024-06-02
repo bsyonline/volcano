@@ -24,6 +24,10 @@ import (
 	"volcano.sh/volcano/pkg/scheduler/api"
 )
 
+func (ssn *Session) AddPrintFns(name string, fn api.PrintJonFn) {
+	ssn.printJobFns[name] = fn
+}
+
 // AddJobOrderFn add job order function
 func (ssn *Session) AddJobOrderFn(name string, cf api.CompareFn) {
 	ssn.jobOrderFns[name] = cf
@@ -147,6 +151,18 @@ func (ssn *Session) AddVictimTasksFns(name string, fns []api.VictimTasksFn) {
 // AddJobStarvingFns add jobStarvingFns function
 func (ssn *Session) AddJobStarvingFns(name string, fn api.ValidateFn) {
 	ssn.jobStarvingFns[name] = fn
+}
+
+func (ssn *Session) PrintJobInfo(jobs []*api.JobInfo) {
+	for _, tier := range ssn.Tiers {
+		for _, plugin := range tier.Plugins {
+			fn, found := ssn.printJobFns[plugin.Name]
+			if !found {
+				continue
+			}
+			fn(jobs)
+		}
+	}
 }
 
 // Reclaimable invoke reclaimable function of the plugins
